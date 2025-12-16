@@ -1,12 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import { MusicCard, CardRow } from '@/components/music-card';
 import { TrackList } from '@/components/track-list';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Search as SearchIcon, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getSpotifyStatus, search, getCategories } from '@/lib/spotify-api';
 import type { Track, Album, Artist, Playlist, Category } from '@shared/schema';
 
-const categories: Category[] = [
+const demoCategories: Category[] = [
   { id: 'c1', name: 'Music', imageUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&h=300&fit=crop' },
   { id: 'c2', name: 'Podcasts', imageUrl: 'https://images.unsplash.com/photo-1478737270239-2f02b77fc618?w=300&h=300&fit=crop' },
   { id: 'c3', name: 'Live Events', imageUrl: 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=300&h=300&fit=crop' },
@@ -22,7 +25,7 @@ const categories: Category[] = [
 ];
 
 const demoTracks: Track[] = [
-  { id: 't1', name: 'Blinding Lights', artistId: 'a1', artistName: 'The Weeknd', albumId: 'al1', albumName: 'After Hours', albumImageUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop', durationMs: 200000, trackNumber: 1, previewUrl: null, explicit: false, isPlayable: true },
+  { id: 't1', name: 'Blinding Lights', artistId: 'a1', artistName: 'The Weeknd', albumId: 'al1', albumName: 'After Hours', albumImageUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop', durationMs: 200000, trackNumber: 1, previewUrl: 'https://p.scdn.co/mp3-preview/0b55d0c4b1c4a3c5e4c7b8f1d8e4c8c1e0f1g2h3', explicit: false, isPlayable: true },
   { id: 't2', name: 'Levitating', artistId: 'a2', artistName: 'Dua Lipa', albumId: 'al2', albumName: 'Future Nostalgia', albumImageUrl: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=300&h=300&fit=crop', durationMs: 203000, trackNumber: 1, previewUrl: null, explicit: false, isPlayable: true },
   { id: 't3', name: "God's Plan", artistId: 'a3', artistName: 'Drake', albumId: 'al3', albumName: 'Scorpion', albumImageUrl: 'https://images.unsplash.com/photo-1571609860754-01dcc6c5da15?w=300&h=300&fit=crop', durationMs: 198000, trackNumber: 1, previewUrl: null, explicit: true, isPlayable: true },
   { id: 't4', name: 'Anti-Hero', artistId: 'a4', artistName: 'Taylor Swift', albumId: 'al4', albumName: 'Midnights', albumImageUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300&h=300&fit=crop', durationMs: 200000, trackNumber: 1, previewUrl: null, explicit: false, isPlayable: true },
@@ -43,19 +46,123 @@ const demoPlaylists: Playlist[] = [
   { id: 'sp2', name: 'Pop Rising', description: 'Tomorrow\'s hits today', imageUrl: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=300&h=300&fit=crop', ownerId: 'spotify', ownerName: 'Spotify', isPublic: true, totalTracks: 50 },
 ];
 
+function mapSpotifyTrack(t: any): Track {
+  return {
+    id: t.id,
+    name: t.name,
+    artistId: t.artists?.[0]?.id || '',
+    artistName: t.artists?.map((a: any) => a.name).join(', ') || '',
+    albumId: t.album?.id || '',
+    albumName: t.album?.name || '',
+    albumImageUrl: t.album?.images?.[0]?.url || '',
+    durationMs: t.duration_ms,
+    trackNumber: t.track_number,
+    previewUrl: t.preview_url,
+    explicit: t.explicit,
+    isPlayable: !t.is_local,
+  };
+}
+
+function mapSpotifyArtist(a: any): Artist {
+  return {
+    id: a.id,
+    name: a.name,
+    imageUrl: a.images?.[0]?.url || null,
+    followers: a.followers?.total,
+  };
+}
+
+function mapSpotifyAlbum(a: any): Album {
+  return {
+    id: a.id,
+    name: a.name,
+    imageUrl: a.images?.[0]?.url || '',
+    artistId: a.artists?.[0]?.id || '',
+    artistName: a.artists?.map((ar: any) => ar.name).join(', ') || '',
+    releaseDate: a.release_date,
+    totalTracks: a.total_tracks,
+    type: a.album_type,
+  };
+}
+
+function mapSpotifyPlaylist(p: any): Playlist {
+  return {
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    imageUrl: p.images?.[0]?.url || null,
+    ownerId: p.owner?.id,
+    ownerName: p.owner?.display_name || 'Spotify',
+    isPublic: p.public,
+    totalTracks: p.tracks?.total || 0,
+  };
+}
+
 export default function SearchPage() {
   const [query, setQuery] = useState('');
-  const [hasSearched, setHasSearched] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
 
-  const handleSearch = (value: string) => {
-    setQuery(value);
-    setHasSearched(value.length > 0);
-  };
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const { data: status } = useQuery({
+    queryKey: ['/api/spotify/status'],
+    queryFn: getSpotifyStatus,
+  });
+
+  const isAuthenticated = status?.authenticated;
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ['/api/spotify/categories'],
+    queryFn: () => getCategories(20),
+    enabled: isAuthenticated,
+  });
+
+  const { data: searchResults, isLoading: searchLoading } = useQuery({
+    queryKey: ['/api/spotify/search', debouncedQuery],
+    queryFn: () => search(debouncedQuery),
+    enabled: isAuthenticated && debouncedQuery.length > 0,
+  });
+
+  const categories = isAuthenticated && categoriesData?.categories?.items
+    ? categoriesData.categories.items.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        imageUrl: c.icons?.[0]?.url || '',
+      }))
+    : demoCategories;
+
+  const hasSearched = query.length > 0;
 
   const clearSearch = () => {
     setQuery('');
-    setHasSearched(false);
+    setDebouncedQuery('');
   };
+
+  const tracks = isAuthenticated && searchResults?.tracks?.items
+    ? searchResults.tracks.items.map(mapSpotifyTrack)
+    : hasSearched ? demoTracks.filter(t => 
+        t.name.toLowerCase().includes(query.toLowerCase()) ||
+        t.artistName.toLowerCase().includes(query.toLowerCase())
+      ) : [];
+
+  const artists = isAuthenticated && searchResults?.artists?.items
+    ? searchResults.artists.items.slice(0, 6).map(mapSpotifyArtist)
+    : hasSearched ? demoArtists : [];
+
+  const albums = isAuthenticated && searchResults?.albums?.items
+    ? searchResults.albums.items.slice(0, 6).map(mapSpotifyAlbum)
+    : hasSearched ? demoAlbums : [];
+
+  const playlists = isAuthenticated && searchResults?.playlists?.items
+    ? searchResults.playlists.items.slice(0, 6).map(mapSpotifyPlaylist)
+    : hasSearched ? demoPlaylists : [];
+
+  const topResult = artists[0] || null;
 
   return (
     <div className="min-h-full pb-8">
@@ -67,7 +174,7 @@ export default function SearchPage() {
             type="search"
             placeholder="What do you want to listen to?"
             value={query}
-            onChange={(e) => handleSearch(e.target.value)}
+            onChange={(e) => setQuery(e.target.value)}
             className="pl-10 pr-10 h-12 bg-card border-0 text-base rounded-full"
             data-testid="input-search"
           />
@@ -112,70 +219,112 @@ export default function SearchPage() {
               ))}
             </div>
           </div>
+        ) : searchLoading && isAuthenticated ? (
+          /* Loading State */
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr] gap-6">
+              <div>
+                <h2 className="text-2xl font-bold text-foreground mb-4">Top result</h2>
+                <Skeleton className="h-48 w-full rounded-lg" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-foreground mb-4">Songs</h2>
+                <div className="space-y-2">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-14 w-full" />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         ) : (
           /* Search Results */
           <div className="space-y-8">
             {/* Top Result & Songs */}
             <div className="grid grid-cols-1 lg:grid-cols-[400px_1fr] gap-6">
               {/* Top Result */}
-              <div>
-                <h2 className="text-2xl font-bold text-foreground mb-4" data-testid="text-top-result">
-                  Top result
-                </h2>
-                <div className="p-5 rounded-lg bg-card hover-elevate cursor-pointer">
-                  <img 
-                    src={demoArtists[0].imageUrl || ''} 
-                    alt={demoArtists[0].name}
-                    className="w-24 h-24 rounded-full mb-5"
-                  />
-                  <h3 className="text-3xl font-bold text-foreground mb-1">
-                    {demoArtists[0].name}
-                  </h3>
-                  <p className="text-sm text-muted-foreground">Artist</p>
+              {topResult && (
+                <div>
+                  <h2 className="text-2xl font-bold text-foreground mb-4" data-testid="text-top-result">
+                    Top result
+                  </h2>
+                  <div className="p-5 rounded-lg bg-card hover-elevate cursor-pointer">
+                    {topResult.imageUrl ? (
+                      <img 
+                        src={topResult.imageUrl} 
+                        alt={topResult.name}
+                        className="w-24 h-24 rounded-full mb-5 object-cover"
+                      />
+                    ) : (
+                      <div className="w-24 h-24 rounded-full mb-5 bg-muted flex items-center justify-center">
+                        <span className="text-2xl font-bold text-muted-foreground">{topResult.name.charAt(0)}</span>
+                      </div>
+                    )}
+                    <h3 className="text-3xl font-bold text-foreground mb-1">
+                      {topResult.name}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">Artist</p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Songs */}
-              <div>
-                <h2 className="text-2xl font-bold text-foreground mb-4" data-testid="text-songs">
-                  Songs
-                </h2>
-                <TrackList tracks={demoTracks} showAlbum={false} showHeader={false} />
-              </div>
+              {tracks.length > 0 && (
+                <div>
+                  <h2 className="text-2xl font-bold text-foreground mb-4" data-testid="text-songs">
+                    Songs
+                  </h2>
+                  <TrackList tracks={tracks.slice(0, 4)} showAlbum={false} showHeader={false} />
+                </div>
+              )}
             </div>
 
             {/* Artists */}
-            <CardRow title="Artists">
-              {demoArtists.map((artist) => (
-                <MusicCard 
-                  key={artist.id} 
-                  type="artist" 
-                  data={artist}
-                />
-              ))}
-            </CardRow>
+            {artists.length > 0 && (
+              <CardRow title="Artists">
+                {artists.map((artist) => (
+                  <MusicCard 
+                    key={artist.id} 
+                    type="artist" 
+                    data={artist}
+                  />
+                ))}
+              </CardRow>
+            )}
 
             {/* Albums */}
-            <CardRow title="Albums">
-              {demoAlbums.map((album) => (
-                <MusicCard 
-                  key={album.id} 
-                  type="album" 
-                  data={album}
-                />
-              ))}
-            </CardRow>
+            {albums.length > 0 && (
+              <CardRow title="Albums">
+                {albums.map((album) => (
+                  <MusicCard 
+                    key={album.id} 
+                    type="album" 
+                    data={album}
+                  />
+                ))}
+              </CardRow>
+            )}
 
             {/* Playlists */}
-            <CardRow title="Playlists">
-              {demoPlaylists.map((playlist) => (
-                <MusicCard 
-                  key={playlist.id} 
-                  type="playlist" 
-                  data={playlist}
-                />
-              ))}
-            </CardRow>
+            {playlists.length > 0 && (
+              <CardRow title="Playlists">
+                {playlists.map((playlist) => (
+                  <MusicCard 
+                    key={playlist.id} 
+                    type="playlist" 
+                    data={playlist}
+                  />
+                ))}
+              </CardRow>
+            )}
+
+            {/* No Results */}
+            {tracks.length === 0 && artists.length === 0 && albums.length === 0 && playlists.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-xl font-bold text-foreground mb-2">No results found for "{query}"</p>
+                <p className="text-muted-foreground">Please check your spelling or try different keywords.</p>
+              </div>
+            )}
           </div>
         )}
       </div>
