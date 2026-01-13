@@ -28,24 +28,25 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <PlayerProvider>
-          <div className="flex h-screen w-full bg-background overflow-hidden">
-            {/* Sidebar */}
-            <div className="w-60 flex-shrink-0 border-r border-border">
-              <AppSidebar />
+          <div className="flex flex-col h-screen w-full bg-background overflow-hidden">
+            <div className="flex flex-1 overflow-hidden">
+              {/* Sidebar */}
+              <div className="w-60 flex-shrink-0 border-r border-border">
+                <AppSidebar />
+              </div>
+              
+              {/* Main Content */}
+              <div className="flex-1 flex flex-col min-w-0">
+                <ScrollArea className="flex-1">
+                  <main className="min-h-full">
+                    <Router />
+                  </main>
+                </ScrollArea>
+              </div>
             </div>
-            
-            {/* Main Content */}
-            <div className="flex-1 flex flex-col min-w-0">
-              <ScrollArea className="flex-1 h-[calc(100vh-90px)]">
-                <main className="min-h-full">
-                  <Router />
-                </main>
-              </ScrollArea>
-            </div>
+            {/* Player Bar */}
+            <PlayerBar />
           </div>
-          
-          {/* Player Bar */}
-          <PlayerBar />
           
           <Toaster />
         </PlayerProvider>
